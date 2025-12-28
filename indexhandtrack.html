@@ -1,127 +1,775 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <title>Doctor Strange Hand Tracking</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand-Controlled Magic Circle</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; }
-        #webcam { transform: scaleX(-1); } /* Mirror the video */
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-</head>
-<body>
-    <video id="webcam" autoplay playsinline style="display:none"></video>
-
-    <script type="module">
-        import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
-        import { EffectComposer } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/EffectComposer.js';
-        import { RenderPass } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/RenderPass.js';
-        import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/UnrealBloomPass.js';
-
-        let scene, camera, renderer, composer, magicGroup, sparks;
-        let targetX = 0, targetY = 0;
-
-        async function init() {
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 5;
-
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement);
-
-            // 1. Webcam Background
-            const video = document.getElementById('webcam');
-            const videoTex = new THREE.VideoTexture(video);
-            const bg = new THREE.Mesh(new THREE.PlaneGeometry(16, 9), new THREE.MeshBasicMaterial({ map: videoTex }));
-            bg.position.z = -5;
-            scene.add(bg);
-
-            // 2. Magic Circle
-            magicGroup = new THREE.Group();
-            const mat = (op) => new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: op, side: THREE.DoubleSide });
-            
-            magicGroup.add(new THREE.Mesh(new THREE.RingGeometry(1.0, 1.05, 64), mat(1)));
-            magicGroup.add(new THREE.Mesh(new THREE.RingGeometry(1.2, 1.3, 6), mat(0.6))); // Hexagon
-            
-            // Add some "runes" (simple boxes)
-            for(let i=0; i<8; i++) {
-                let rune = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.01), mat(0.8));
-                let angle = (i / 8) * Math.PI * 2;
-                rune.position.set(Math.cos(angle)*1.5, Math.sin(angle)*1.5, 0);
-                rune.rotation.z = angle;
-                magicGroup.add(rune);
-            }
-            scene.add(magicGroup);
-
-            // 3. Sparks (Particles)
-            const sparkGeo = new THREE.BufferGeometry();
-            const sparkCount = 100;
-            const posArray = new Float32Array(sparkCount * 3);
-            for(let i=0; i<sparkCount*3; i++) posArray[i] = (Math.random() - 0.5) * 2;
-            sparkGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
-            sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: 0xffaa00, size: 0.05 }));
-            scene.add(sparks);
-
-            // 4. Bloom
-            const renderPass = new RenderPass(scene, camera);
-            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.0, 0.5, 0.1);
-            composer = new EffectComposer(renderer);
-            composer.addPass(renderPass);
-            composer.addPass(bloomPass);
-
-            // 5. MediaPipe setup (Using global window objects)
-            const hands = new window.Hands({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-            });
-
-            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
-            hands.onResults(onResults);
-
-            const mpCamera = new window.Camera(video, {
-                onFrame: async () => { await hands.send({ image: video }); },
-                width: 1280, height: 720
-            });
-            mpCamera.start();
-
-            animate();
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000000;
+            background-color: #000000;
+            font-family: 'Arial', sans-serif;
         }
 
-        function onResults(results) {
+        #canvas {
+            display: block;
+            background: #000000;
+            background-color: #000000;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 2;
+        }
+
+        #videoCanvas {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 240px;
+            height: 180px;
+            border: 2px solid #ff6600;
+            border-radius: 10px;
+            z-index: 3;
+            opacity: 0.7;
+        }
+
+        #video {
+            display: none;
+        }
+
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #f4a460;
+            text-align: center;
+            font-size: 14px;
+            text-shadow: 0 0 10px #ff6600;
+            pointer-events: none;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 10px;
+        }
+
+        #gestureInfo {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #f4a460;
+            font-size: 12px;
+            text-shadow: 0 0 5px #ff6600;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #ff6600;
+            max-width: 250px;
+        }
+
+        #gestureInfo h3 {
+            margin: 0 0 10px 0;
+            color: #ff6600;
+        }
+
+        #gestureInfo ul {
+            margin: 5px 0;
+            padding-left: 20px;
+        }
+
+        #gestureInfo li {
+            margin: 5px 0;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff6600;
+            font-size: 20px;
+            z-index: 100;
+        }
+
+        #startButton {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 102, 0, 0.2);
+            border: 2px solid #ff6600;
+            color: #f4a460;
+            padding: 20px 40px;
+            cursor: pointer;
+            font-size: 18px;
+            border-radius: 10px;
+            z-index: 100;
+            transition: all 0.3s;
+        }
+
+        #startButton:hover {
+            background: rgba(255, 102, 0, 0.4);
+            box-shadow: 0 0 30px #ff6600;
+            transform: translate(-50%, -50%) scale(1.05);
+        }
+    </style>
+</head>
+
+<body>
+    <div id="info">Use hand gestures to control the magic circle</div>
+    <div id="gestureInfo">
+        <h3>Hand Controls:</h3>
+        <ul>
+            <li>✋ <strong>Open Palm</strong>: Show circle</li>
+            <li>✊ <strong>Closed Fist</strong>: Hide circle</li>
+            <li>✌️ <strong>Peace Sign</strong>: Change color</li>
+            <li>👍 <strong>Thumbs Up</strong>: Pulse effect</li>
+            <li>☝️ <strong>Point Up</strong>: Cast spell</li>
+            <li>🤏 <strong>Pinch</strong>: Scale circle</li>
+            <li>Move hand to control position</li>
+        </ul>
+    </div>
+
+    <button id="startButton" onclick="startApp()">Start Hand Tracking</button>
+    <div class="loading" style="display: none;">Loading hand tracking...</div>
+
+    <video id="video"></video>
+    <canvas id="videoCanvas"></canvas>
+    <canvas id="canvas"></canvas>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        let scene, camera, renderer;
+        let magicCircles = [];
+        let particles;
+        let handPosition = new THREE.Vector2();
+        let rotating = true;
+        let colorIndex = 0;
+        let circleVisible = false;
+        let circleScale = 1;
+        let targetScale = 1;
+        let hands;
+        let videoElement;
+        let canvasElement;
+        let canvasCtx;
+        let cameraStarted = false;
+
+        const colors = [
+            { main: 0xff6600, secondary: 0xffaa00 }, // Orange
+            { main: 0x00ff88, secondary: 0x00ffff }, // Cyan
+            { main: 0xff00ff, secondary: 0xff66ff }, // Purple
+            { main: 0x00ff00, secondary: 0x88ff00 }, // Green
+            { main: 0xff0066, secondary: 0xff3399 }  // Pink
+        ];
+
+        function initThreeJS() {
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x000000, 1, 100);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(
+                75,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.z = 30;
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({
+                canvas: document.getElementById('canvas'),
+                antialias: true,
+                alpha: false
+            });
+            renderer.setClearColor(0x000000, 1);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(colors[colorIndex].main, 2, 50);
+            pointLight.position.set(0, 0, 10);
+            scene.add(pointLight);
+
+            // Create magic circles
+            createMagicCircles();
+
+            // Create particle system
+            createParticles();
+
+            // Initially hide circles
+            magicCircles.forEach(circle => {
+                circle.visible = false;
+            });
+            if (particles) particles.visible = false;
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function initHandTracking() {
+            videoElement = document.getElementById('video');
+            canvasElement = document.getElementById('videoCanvas');
+            canvasCtx = canvasElement.getContext('2d');
+
+            hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onHandResults);
+        }
+
+        function startApp() {
+            document.getElementById('startButton').style.display = 'none';
+            document.querySelector('.loading').style.display = 'block';
+
+            initThreeJS();
+            initHandTracking();
+            startCamera();
+        }
+
+        function startCamera() {
+            const camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+
+            camera.start().then(() => {
+                document.querySelector('.loading').style.display = 'none';
+                cameraStarted = true;
+                animate();
+            });
+        }
+
+        function onHandResults(results) {
+            // Draw hand skeleton on video canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const hand = results.multiHandLandmarks[0];
-                const palm = hand[9];
-                // Mirror tracking and scale to screen
-                targetX = -(palm.x - 0.5) * 12; 
-                targetY = -(palm.y - 0.5) * 8;
+                const landmarks = results.multiHandLandmarks[0];
+
+                // Draw hand connections
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS,
+                    { color: '#FF6600', lineWidth: 2 });
+                drawLandmarks(canvasCtx, landmarks,
+                    { color: '#FFAA00', lineWidth: 1, radius: 3 });
+
+                // Get hand position (use palm center)
+                const palmX = (landmarks[0].x + landmarks[5].x + landmarks[17].x) / 3;
+                const palmY = (landmarks[0].y + landmarks[5].y + landmarks[17].y) / 3;
+
+                // Convert to Three.js coordinates
+                handPosition.x = (palmX - 0.5) * 20;
+                handPosition.y = -(palmY - 0.5) * 20;
+
+                // Detect gestures
+                detectGesture(landmarks);
             }
+
+            canvasCtx.restore();
+        }
+
+        function detectGesture(landmarks) {
+            const fingers = getFingerStates(landmarks);
+
+            // Open palm - all fingers extended
+            if (fingers.every(f => f)) {
+                if (!circleVisible) {
+                    showMagicCircle();
+                }
+            }
+            // Closed fist - all fingers closed
+            else if (fingers.every(f => !f)) {
+                if (circleVisible) {
+                    hideMagicCircle();
+                }
+            }
+            // Peace sign - index and middle up, others down
+            else if (fingers[1] && fingers[2] && !fingers[0] && !fingers[3] && !fingers[4]) {
+                changeColor();
+            }
+            // Thumbs up - only thumb up
+            else if (fingers[0] && !fingers[1] && !fingers[2] && !fingers[3] && !fingers[4]) {
+                addPulse();
+            }
+            // Pointing up - only index finger up
+            else if (!fingers[0] && fingers[1] && !fingers[2] && !fingers[3] && !fingers[4]) {
+                castSpell();
+            }
+            // Pinch - detect thumb and index close together
+            else if (isPinching(landmarks)) {
+                const pinchDistance = getDistance(landmarks[4], landmarks[8]);
+                targetScale = 0.5 + (1 - pinchDistance * 2);
+                targetScale = Math.max(0.3, Math.min(2, targetScale));
+            }
+        }
+
+        function getFingerStates(landmarks) {
+            const fingerStates = [];
+
+            // Thumb - special case
+            fingerStates[0] = landmarks[4].x > landmarks[3].x; // Simplified thumb detection
+
+            // Other fingers - compare y coordinates
+            const fingerTips = [8, 12, 16, 20];
+            const fingerBases = [6, 10, 14, 18];
+
+            for (let i = 0; i < fingerTips.length; i++) {
+                fingerStates[i + 1] = landmarks[fingerTips[i]].y < landmarks[fingerBases[i]].y;
+            }
+
+            return fingerStates;
+        }
+
+        function isPinching(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
+            const distance = getDistance(thumbTip, indexTip);
+            return distance < 0.1;
+        }
+
+        function getDistance(point1, point2) {
+            const dx = point1.x - point2.x;
+            const dy = point1.y - point2.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        function drawConnectors(ctx, landmarks, connections, style) {
+            ctx.strokeStyle = style.color;
+            ctx.lineWidth = style.lineWidth;
+
+            connections.forEach(([start, end]) => {
+                const startPoint = landmarks[start];
+                const endPoint = landmarks[end];
+
+                ctx.beginPath();
+                ctx.moveTo(startPoint.x * ctx.canvas.width, startPoint.y * ctx.canvas.height);
+                ctx.lineTo(endPoint.x * ctx.canvas.width, endPoint.y * ctx.canvas.height);
+                ctx.stroke();
+            });
+        }
+
+        function drawLandmarks(ctx, landmarks, style) {
+            ctx.fillStyle = style.color;
+
+            landmarks.forEach(landmark => {
+                ctx.beginPath();
+                ctx.arc(
+                    landmark.x * ctx.canvas.width,
+                    landmark.y * ctx.canvas.height,
+                    style.radius,
+                    0,
+                    2 * Math.PI
+                );
+                ctx.fill();
+            });
+        }
+
+        function showMagicCircle() {
+            circleVisible = true;
+            magicCircles.forEach(circle => {
+                circle.visible = true;
+            });
+            if (particles) particles.visible = true;
+        }
+
+        function hideMagicCircle() {
+            circleVisible = false;
+            magicCircles.forEach(circle => {
+                circle.visible = false;
+            });
+            if (particles) particles.visible = false;
+        }
+
+        function createMagicCircles() {
+            // Main outer circle
+            const outerCircle = createCircle(10, colors[colorIndex].main, 3);
+            magicCircles.push(outerCircle);
+            scene.add(outerCircle);
+
+            // Secondary rotating circle
+            const middleCircle = createCircle(7, colors[colorIndex].secondary, 2);
+            magicCircles.push(middleCircle);
+            scene.add(middleCircle);
+
+            // Inner circle
+            const innerCircle = createCircle(4, colors[colorIndex].main, 2);
+            magicCircles.push(innerCircle);
+            scene.add(innerCircle);
+
+            // Add rune-like patterns
+            for (let i = 0; i < 8; i++) {
+                const angle = (i / 8) * Math.PI * 2;
+                const runeRing = createRuneRing(angle, 8.5);
+                magicCircles.push(runeRing);
+                scene.add(runeRing);
+            }
+
+            // Add connecting lines
+            const connectingLines = createConnectingLines();
+            magicCircles.push(connectingLines);
+            scene.add(connectingLines);
+
+            // Add center symbol
+            const centerSymbol = createCenterSymbol();
+            magicCircles.push(centerSymbol);
+            scene.add(centerSymbol);
+        }
+
+        function createCircle(radius, color, linewidth) {
+            const geometry = new THREE.BufferGeometry();
+            const material = new THREE.LineBasicMaterial({
+                color: color,
+                linewidth: linewidth,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            const points = [];
+            const segments = 64;
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                points.push(new THREE.Vector3(
+                    Math.cos(angle) * radius,
+                    Math.sin(angle) * radius,
+                    0
+                ));
+            }
+
+            geometry.setFromPoints(points);
+            return new THREE.Line(geometry, material);
+        }
+
+        function createRuneRing(angle, radius) {
+            const group = new THREE.Group();
+
+            const shape = new THREE.Shape();
+            shape.moveTo(0, 0.5);
+            shape.lineTo(-0.3, -0.5);
+            shape.lineTo(0.3, -0.5);
+            shape.closePath();
+
+            const geometry = new THREE.ShapeGeometry(shape);
+            const material = new THREE.MeshBasicMaterial({
+                color: colors[colorIndex].secondary,
+                transparent: true,
+                opacity: 0.6,
+                side: THREE.DoubleSide
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.x = Math.cos(angle) * radius;
+            mesh.position.y = Math.sin(angle) * radius;
+            mesh.rotation.z = angle + Math.PI / 2;
+
+            group.add(mesh);
+            return group;
+        }
+
+        function createConnectingLines() {
+            const group = new THREE.Group();
+            const material = new THREE.LineBasicMaterial({
+                color: colors[colorIndex].main,
+                transparent: true,
+                opacity: 0.4
+            });
+
+            for (let i = 0; i < 6; i++) {
+                const angle1 = (i / 6) * Math.PI * 2;
+                const angle2 = ((i + 2) / 6) * Math.PI * 2;
+
+                const geometry = new THREE.BufferGeometry();
+                const points = [
+                    new THREE.Vector3(Math.cos(angle1) * 7, Math.sin(angle1) * 7, 0),
+                    new THREE.Vector3(Math.cos(angle2) * 7, Math.sin(angle2) * 7, 0)
+                ];
+                geometry.setFromPoints(points);
+
+                const line = new THREE.Line(geometry, material);
+                group.add(line);
+            }
+
+            return group;
+        }
+
+        function createCenterSymbol() {
+            const group = new THREE.Group();
+
+            const geometry = new THREE.TorusGeometry(1.5, 0.1, 8, 32);
+            const material = new THREE.MeshBasicMaterial({
+                color: colors[colorIndex].main,
+                transparent: true,
+                opacity: 0.9
+            });
+
+            const torus = new THREE.Mesh(geometry, material);
+            group.add(torus);
+
+            const sphereGeometry = new THREE.SphereGeometry(0.3, 16, 16);
+            const sphereMaterial = new THREE.MeshBasicMaterial({
+                color: colors[colorIndex].secondary,
+                emissive: colors[colorIndex].secondary,
+                emissiveIntensity: 0.5
+            });
+
+            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            group.add(sphere);
+
+            return group;
+        }
+
+        function createParticles() {
+            const particleCount = 200;
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+            const sizes = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 3 + Math.random() * 12;
+
+                positions.push(
+                    Math.cos(angle) * radius,
+                    Math.sin(angle) * radius,
+                    (Math.random() - 0.5) * 2
+                );
+
+                colors.push(1, 0.6, 0.2);
+                sizes.push(Math.random() * 0.5 + 0.2);
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1));
+
+            const material = new THREE.PointsMaterial({
+                size: 0.3,
+                transparent: true,
+                opacity: 0.8,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+
+        function castSpell() {
+            if (!circleVisible) return;
+
+            // Flash effect
+            magicCircles.forEach((circle, index) => {
+                const originalOpacity = circle.material ? circle.material.opacity : 0.8;
+                if (circle.material) {
+                    circle.material.opacity = 1;
+                    setTimeout(() => {
+                        circle.material.opacity = originalOpacity;
+                    }, 200);
+                }
+            });
+
+            // Expand rings
+            magicCircles.forEach((circle, index) => {
+                const originalScale = circle.scale.x;
+                circle.scale.set(1.3, 1.3, 1.3);
+                setTimeout(() => {
+                    circle.scale.set(originalScale, originalScale, originalScale);
+                }, 300);
+            });
+
+            createSpellBurst();
+        }
+
+        function createSpellBurst() {
+            const burstGeometry = new THREE.BufferGeometry();
+            const burstPositions = [];
+            const burstColors = [];
+
+            for (let i = 0; i < 50; i++) {
+                burstPositions.push(0, 0, 0);
+                burstColors.push(1, 0.6, 0.2);
+            }
+
+            burstGeometry.setAttribute('position', new THREE.Float32BufferAttribute(burstPositions, 3));
+            burstGeometry.setAttribute('color', new THREE.Float32BufferAttribute(burstColors, 3));
+
+            const burstMaterial = new THREE.PointsMaterial({
+                size: 0.4,
+                transparent: true,
+                opacity: 1,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false
+            });
+
+            const burst = new THREE.Points(burstGeometry, burstMaterial);
+            scene.add(burst);
+
+            let frame = 0;
+            const animateBurst = () => {
+                frame++;
+                const positions = burst.geometry.attributes.position.array;
+
+                for (let i = 0; i < positions.length; i += 3) {
+                    const angle = (i / 3) * (Math.PI * 2 / 50);
+                    const radius = frame * 0.3;
+                    positions[i] = Math.cos(angle) * radius;
+                    positions[i + 1] = Math.sin(angle) * radius;
+                }
+
+                burst.geometry.attributes.position.needsUpdate = true;
+                burst.material.opacity = Math.max(0, 1 - frame * 0.05);
+
+                if (frame < 30) {
+                    requestAnimationFrame(animateBurst);
+                } else {
+                    scene.remove(burst);
+                }
+            };
+
+            animateBurst();
+        }
+
+        let lastColorChange = 0;
+        function changeColor() {
+            const now = Date.now();
+            if (now - lastColorChange < 1000) return; // Debounce
+            lastColorChange = now;
+
+            colorIndex = (colorIndex + 1) % colors.length;
+
+            magicCircles.forEach(object => {
+                if (object.material) {
+                    object.material.color.setHex(colors[colorIndex].main);
+                }
+
+                object.traverse(child => {
+                    if (child.material) {
+                        child.material.color.setHex(colors[colorIndex].secondary);
+                    }
+                });
+            });
+        }
+
+        let pulseAnimation = null;
+        function addPulse() {
+            if (pulseAnimation || !circleVisible) return;
+
+            let pulseFrame = 0;
+            pulseAnimation = setInterval(() => {
+                pulseFrame += 0.1;
+                const scale = 1 + Math.sin(pulseFrame) * 0.1;
+
+                magicCircles.forEach((circle, index) => {
+                    if (index < 3) {
+                        circle.scale.set(scale, scale, 1);
+                    }
+                });
+
+                if (pulseFrame > Math.PI * 4) {
+                    clearInterval(pulseAnimation);
+                    pulseAnimation = null;
+                    magicCircles.forEach(circle => {
+                        circle.scale.set(1, 1, 1);
+                    });
+                }
+            }, 30);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
         function animate() {
+            if (!cameraStarted) return;
             requestAnimationFrame(animate);
-            
-            // Smooth move
-            magicGroup.position.x += (targetX - magicGroup.position.x) * 0.15;
-            magicGroup.position.y += (targetY - magicGroup.position.y) * 0.15;
-            
-            // Rotate layers
-            magicGroup.children[0].rotation.z += 0.05;
-            magicGroup.children[1].rotation.z -= 0.02;
 
-            // Move sparks around the circle
-            const positions = sparks.geometry.attributes.position.array;
-            for(let i=0; i<positions.length; i+=3) {
-                positions[i] += (magicGroup.position.x - positions[i]) * 0.1 + (Math.random()-0.5)*0.1;
-                positions[i+1] += (magicGroup.position.y - positions[i+1]) * 0.1 + (Math.random()-0.5)*0.1;
-                positions[i+2] = magicGroup.position.z;
+            // Smooth scale transition
+            circleScale += (targetScale - circleScale) * 0.1;
+
+            // Apply scale and position to all circles
+            magicCircles.forEach((circle, index) => {
+                // Position follows hand
+                circle.position.x += (handPosition.x - circle.position.x) * 0.1;
+                circle.position.y += (handPosition.y - circle.position.y) * 0.1;
+
+                // Apply scale
+                circle.scale.set(circleScale, circleScale, circleScale);
+
+                // Rotate circles if visible
+                if (circleVisible && rotating) {
+                    if (index === 0) circle.rotation.z += 0.005;
+                    if (index === 1) circle.rotation.z -= 0.008;
+                    if (index === 2) circle.rotation.z += 0.01;
+
+                    // Rotate rune rings
+                    if (index >= 3 && index < 11) {
+                        circle.rotation.z += 0.003;
+                    }
+
+                    // Rotate center symbol
+                    if (index === magicCircles.length - 1) {
+                        circle.rotation.z -= 0.02;
+                    }
+                }
+            });
+
+            // Animate particles
+            if (particles && circleVisible) {
+                particles.rotation.z += 0.001;
+                particles.position.x = handPosition.x;
+                particles.position.y = handPosition.y;
+                particles.scale.set(circleScale, circleScale, circleScale);
+
+                const positions = particles.geometry.attributes.position.array;
+                for (let i = 0; i < positions.length; i += 3) {
+                    positions[i + 2] = Math.sin(Date.now() * 0.001 + i) * 0.5;
+                }
+                particles.geometry.attributes.position.needsUpdate = true;
             }
-            sparks.geometry.attributes.position.needsUpdate = true;
 
-            composer.render();
+            renderer.render(scene, camera);
         }
 
-        init();
+        // MediaPipe Hand Connections
+        const HAND_CONNECTIONS = [
+            [0, 1], [1, 2], [2, 3], [3, 4],
+            [0, 5], [5, 6], [6, 7], [7, 8],
+            [5, 9], [9, 10], [10, 11], [11, 12],
+            [9, 13], [13, 14], [14, 15], [15, 16],
+            [13, 17], [17, 18], [18, 19], [19, 20],
+            [0, 17]
+        ];
     </script>
 </body>
+
 </html>
