@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <video id="webcam" autoplay playsinline style="display:none"></video>
+    
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
+        import { EffectComposer } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+        let scene, camera, renderer, composer, magicGroup;
+        let mouseX = 0, mouseY = 0;
+
+        async function init() {
+            // 1. Scene Setup
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // 2. Webcam Background
+            const video = document.getElementById('webcam');
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            const videoTex = new THREE.VideoTexture(video);
+            const bgMesh = new THREE.Mesh(
+                new THREE.PlaneGeometry(16, 9), 
+                new THREE.MeshBasicMaterial({ map: videoTex })
+            );
+            bgMesh.position.z = -2; // Push behind the circle
+            scene.add(bgMesh);
+
+            // 3. Create Magic Circle
+            magicGroup = new THREE.Group();
+            const mat = (opacity) => new THREE.MeshBasicMaterial({ 
+                color: 0xff6600, transparent: true, opacity, side: THREE.DoubleSide 
+            });
+
+            const ring1 = new THREE.Mesh(new THREE.RingGeometry(1.1, 1.15, 64), mat(0.8));
+            const ring2 = new THREE.Mesh(new THREE.RingGeometry(1.3, 1.5, 6), mat(0.5)); // Hexagon-ish
+            ring2.rotation.z = Math.PI / 2;
+            const ring3 = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.02, 16, 100), mat(0.9));
+            
+            magicGroup.add(ring1, ring2, ring3);
+            scene.add(magicGroup);
+
+            // 4. Bloom Post-Processing (The "Strange" Glow)
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(
+                new THREE.Vector2(window.innerWidth, window.innerHeight),
+                1.5, // Strength
+                0.4, // Radius
+                0.85 // Threshold
+            );
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+
+            // Interaction
+            window.addEventListener('mousemove', (e) => {
+                mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+                mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+            });
+
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Animation: Rotation
+            magicGroup.children[0].rotation.z += 0.02;
+            magicGroup.children[1].rotation.z -= 0.01;
+            magicGroup.children[2].rotation.y += 0.01;
+
+            // Interaction: Follow Mouse
+            const targetX = mouseX * 4;
+            const targetY = mouseY * 2.5;
+            magicGroup.position.x += (targetX - magicGroup.position.x) * 0.1;
+            magicGroup.position.y += (targetY - magicGroup.position.y) * 0.1;
+
+            composer.render();
+        }
+
+        init();
+    </script>
+</body>
+</html>

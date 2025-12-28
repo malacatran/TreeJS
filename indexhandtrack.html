@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Doctor Strange Hand Tracking</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        #webcam { transform: scaleX(-1); } /* Mirror the video */
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+</head>
+<body>
+    <video id="webcam" autoplay playsinline style="display:none"></video>
+
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
+        import { EffectComposer } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/postprocessing/UnrealBloomPass.js';
+
+        let scene, camera, renderer, composer, magicGroup, sparks;
+        let targetX = 0, targetY = 0;
+
+        async function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // 1. Webcam Background
+            const video = document.getElementById('webcam');
+            const videoTex = new THREE.VideoTexture(video);
+            const bg = new THREE.Mesh(new THREE.PlaneGeometry(16, 9), new THREE.MeshBasicMaterial({ map: videoTex }));
+            bg.position.z = -5;
+            scene.add(bg);
+
+            // 2. Magic Circle
+            magicGroup = new THREE.Group();
+            const mat = (op) => new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: op, side: THREE.DoubleSide });
+            
+            magicGroup.add(new THREE.Mesh(new THREE.RingGeometry(1.0, 1.05, 64), mat(1)));
+            magicGroup.add(new THREE.Mesh(new THREE.RingGeometry(1.2, 1.3, 6), mat(0.6))); // Hexagon
+            
+            // Add some "runes" (simple boxes)
+            for(let i=0; i<8; i++) {
+                let rune = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.2, 0.01), mat(0.8));
+                let angle = (i / 8) * Math.PI * 2;
+                rune.position.set(Math.cos(angle)*1.5, Math.sin(angle)*1.5, 0);
+                rune.rotation.z = angle;
+                magicGroup.add(rune);
+            }
+            scene.add(magicGroup);
+
+            // 3. Sparks (Particles)
+            const sparkGeo = new THREE.BufferGeometry();
+            const sparkCount = 100;
+            const posArray = new Float32Array(sparkCount * 3);
+            for(let i=0; i<sparkCount*3; i++) posArray[i] = (Math.random() - 0.5) * 2;
+            sparkGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            sparks = new THREE.Points(sparkGeo, new THREE.PointsMaterial({ color: 0xffaa00, size: 0.05 }));
+            scene.add(sparks);
+
+            // 4. Bloom
+            const renderPass = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.0, 0.5, 0.1);
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderPass);
+            composer.addPass(bloomPass);
+
+            // 5. MediaPipe setup (Using global window objects)
+            const hands = new window.Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+            hands.onResults(onResults);
+
+            const mpCamera = new window.Camera(video, {
+                onFrame: async () => { await hands.send({ image: video }); },
+                width: 1280, height: 720
+            });
+            mpCamera.start();
+
+            animate();
+        }
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const hand = results.multiHandLandmarks[0];
+                const palm = hand[9];
+                // Mirror tracking and scale to screen
+                targetX = -(palm.x - 0.5) * 12; 
+                targetY = -(palm.y - 0.5) * 8;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Smooth move
+            magicGroup.position.x += (targetX - magicGroup.position.x) * 0.15;
+            magicGroup.position.y += (targetY - magicGroup.position.y) * 0.15;
+            
+            // Rotate layers
+            magicGroup.children[0].rotation.z += 0.05;
+            magicGroup.children[1].rotation.z -= 0.02;
+
+            // Move sparks around the circle
+            const positions = sparks.geometry.attributes.position.array;
+            for(let i=0; i<positions.length; i+=3) {
+                positions[i] += (magicGroup.position.x - positions[i]) * 0.1 + (Math.random()-0.5)*0.1;
+                positions[i+1] += (magicGroup.position.y - positions[i+1]) * 0.1 + (Math.random()-0.5)*0.1;
+                positions[i+2] = magicGroup.position.z;
+            }
+            sparks.geometry.attributes.position.needsUpdate = true;
+
+            composer.render();
+        }
+
+        init();
+    </script>
+</body>
+</html>
